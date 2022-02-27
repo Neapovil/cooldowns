@@ -1,0 +1,9 @@
+name: Cooldowns
+main: com.github.neapovil.cooldowns.Cooldowns
+version: 1.0.0
+api-version: 1.13
+author: Neapovil
+website: https://github.com/Neapovil/cooldowns
+permissions:
+  cooldowns.command:
+    default: op
