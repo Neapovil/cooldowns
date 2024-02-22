@@ -1,29 +1,33 @@
 plugins {
-  id 'java-library'
-  id 'com.github.johnrengelman.shadow' version '7.0.0'
+  id "java-library"
+  id "io.papermc.paperweight.userdev" version "1.5.11"
+  id "xyz.jpenilla.run-paper" version "2.2.2"
 }
 
-version = '1.18.1'
-group = 'com.github.neapovil.cooldowns'
-compileJava.options.encoding = 'UTF-8'
+version = "1.19.4"
+group = "com.github.neapovil.cooldowns"
 
+compileJava.options.encoding = "UTF-8"
+compileJava.options.release = 17
 java.toolchain.languageVersion = JavaLanguageVersion.of(17)
 
 repositories {
-  maven { url 'https://papermc.io/repo/repository/maven-public/' }
   mavenCentral()
+  maven { url = "https://repo.codemc.org/repository/maven-public/" }
 }
 
 dependencies {
-  compileOnly group: 'io.papermc.paper', name: 'paper-api', version: '1.18.1-R0.1-SNAPSHOT'
-  compileOnly group: 'dev.jorel', name: 'commandapi-core', version: '7.0.0'
+  paperweight.paperDevBundle("1.19.4-R0.1-SNAPSHOT")
 
-  implementation group: 'com.electronwill.night-config', name:'toml', version: '3.6.0'
+  compileOnly group: "dev.jorel", name: "commandapi-bukkit-core", version: "9.3.0"
 }
 
-shadowJar {
-  classifier ''
-  relocate 'com.electronwill.nightconfig', 'com.github.neapovil.cooldowns.nightconfig'
-}
+tasks {
+  runServer {
+    minecraftVersion("1.19.4")
 
-build.dependsOn shadowJar
+    downloadPlugins {
+      hangar("CommandAPI", "9.3.0")
+    }
+  }
+}

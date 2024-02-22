@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "items": [
+    {
+      "material": "ENDER_PEARL",
+      "seconds": 10
+    },
+    {
+      "material": "GOLDEN_APPLE",
+      "seconds": 10
+    }
+  ]
+}

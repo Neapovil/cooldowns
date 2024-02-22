@@ -1,59 +1,104 @@
 package com.github.neapovil.cooldowns;
 
-import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
+import java.util.Optional;
 
 import org.bukkit.Material;
-import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.ThrowableProjectile;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.ProjectileLaunchEvent;
 import org.bukkit.event.player.PlayerItemConsumeEvent;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 
-import com.electronwill.nightconfig.core.file.FileConfig;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 
+import dev.jorel.commandapi.CommandAPI;
 import dev.jorel.commandapi.CommandAPICommand;
 import dev.jorel.commandapi.arguments.IntegerArgument;
+import dev.jorel.commandapi.arguments.ItemStackArgument;
 import dev.jorel.commandapi.arguments.LiteralArgument;
-import dev.jorel.commandapi.arguments.MultiLiteralArgument;
+import dev.jorel.commandapi.arguments.SafeSuggestions;
 
 public final class Cooldowns extends JavaPlugin implements Listener
 {
     private static Cooldowns instance;
-    private FileConfig config;
-    private final List<UUID> players = new ArrayList<>();
+    private Config config;
+    private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
 
     @Override
     public void onEnable()
     {
         instance = this;
 
-        this.saveResource("cooldowns.toml", false);
+        this.saveResource("config.json", false);
 
-        this.config = FileConfig.builder(new File(this.getDataFolder(), "cooldowns.toml"))
-                .autoreload()
-                .autosave()
-                .build();
-        this.config.load();
+        try
+        {
+            this.load();
+        }
+        catch (IOException e)
+        {
+            e.printStackTrace();
+        }
 
         this.getServer().getPluginManager().registerEvents(this, this);
 
         new CommandAPICommand("cooldowns")
                 .withPermission("cooldowns.command")
                 .withArguments(new LiteralArgument("set"))
-                .withArguments(new MultiLiteralArgument("ender_pearl", "golden_apple"))
+                .withArguments(new ItemStackArgument("itemStack"))
                 .withArguments(new IntegerArgument("seconds"))
                 .executes((sender, args) -> {
-                    final String setting = (String) args[0];
-                    final int cd = (int) args[1];
+                    final ItemStack itemstack = (ItemStack) args.get("itemStack");
+                    final int seconds = (int) args.get("seconds");
 
-                    this.config.set("general." + setting, cd);
+                    final Config.Item item = new Config.Item();
 
-                    sender.sendMessage(setting + " cooldown changed to: " + cd + "s");
+                    item.material = itemstack.getType();
+                    item.seconds = seconds;
+
+                    try
+                    {
+                        this.config.items.removeIf(i -> i.material.equals(itemstack.getType()));
+                        this.config.items.add(item);
+                        this.save();
+                        sender.sendMessage("Item cooldown set to: " + seconds + " seconds");
+                    }
+                    catch (IOException e)
+                    {
+                        this.getLogger().severe(e.getMessage());
+                        throw CommandAPI.failWithString("Unable to set");
+                    }
+                })
+                .register();
+
+        new CommandAPICommand("cooldowns")
+                .withPermission("cooldowns.command")
+                .withArguments(new LiteralArgument("remove"))
+                .withArguments(new ItemStackArgument("itemStack").replaceSafeSuggestions(SafeSuggestions.suggest(info -> {
+                    return this.config.items.stream().map(i -> new ItemStack(i.material)).toArray(ItemStack[]::new);
+                })))
+                .executes((sender, args) -> {
+                    final ItemStack itemstack = (ItemStack) args.get("itemStack");
+
+                    try
+                    {
+                        this.config.items.removeIf(i -> i.material.equals(itemstack.getType()));
+                        this.save();
+                        sender.sendMessage("Item cooldown removed");
+                    }
+                    catch (IOException e)
+                    {
+                        this.getLogger().severe(e.getMessage());
+                        throw CommandAPI.failWithString("Unable to remove");
+                    }
                 })
                 .register();
     }
@@ -63,56 +108,84 @@ public final class Cooldowns extends JavaPlugin implements Listener
     {
     }
 
-    public static Cooldowns getInstance()
+    public static Cooldowns instance()
     {
         return instance;
+    }
+
+    private void load() throws IOException
+    {
+        final String string = Files.readString(this.getDataFolder().toPath().resolve("config.json"));
+        this.config = this.gson.fromJson(string, Config.class);
+    }
+
+    private void save() throws IOException
+    {
+        final String string = this.gson.toJson(this.config);
+        Files.write(this.getDataFolder().toPath().resolve("config.json"), string.getBytes());
+    }
+
+    private Optional<Config.Item> find(ItemStack itemStack)
+    {
+        return this.config.items
+                .stream()
+                .filter(i -> i.material.equals(itemStack.getType()))
+                .findFirst();
     }
 
     @EventHandler
     private void projectileLaunch(ProjectileLaunchEvent event)
     {
-        if (!(event.getEntity().getShooter() instanceof Player))
+        if (!(event.getEntity().getShooter() instanceof Player player))
         {
             return;
         }
 
-        if (!event.getEntityType().equals(EntityType.ENDER_PEARL))
+        if (!(event.getEntity() instanceof ThrowableProjectile projectile))
         {
             return;
         }
 
-        final Player player = (Player) event.getEntity().getShooter();
-
-        this.getServer().getScheduler().runTaskLater(this, () -> {
-            player.setCooldown(Material.ENDER_PEARL, 20 * this.config.getInt("general.ender_pearl"));
-        }, 0);
+        this.find(projectile.getItem()).ifPresent(i -> {
+            if (player.hasCooldown(i.material))
+            {
+                event.setCancelled(true);
+            }
+            else
+            {
+                this.getServer().getScheduler().runTask(this, () -> {
+                    player.setCooldown(i.material, 20 * i.seconds);
+                });
+            }
+        });
     }
 
     @EventHandler
     private void playerItemConsume(PlayerItemConsumeEvent event)
     {
-        if (!event.getItem().getType().equals(Material.GOLDEN_APPLE))
+        this.find(event.getItem()).ifPresent(i -> {
+            if (event.getPlayer().hasCooldown(i.material))
+            {
+                event.setCancelled(true);
+            }
+            else
+            {
+                this.getServer().getScheduler().runTask(this, () -> {
+                    event.getPlayer().setCooldown(i.material, 20 * i.seconds);
+                });
+            }
+        });
+    }
+
+    public class Config
+    {
+        public boolean enabled;
+        public List<Item> items = new ArrayList<>();
+
+        public static class Item
         {
-            return;
+            public Material material;
+            public int seconds;
         }
-
-        final Player player = event.getPlayer();
-
-        if (!player.hasCooldown(Material.GOLDEN_APPLE))
-        {
-            this.players.removeIf(u -> u.equals(player.getUniqueId()));
-        }
-
-        if (this.players.contains(player.getUniqueId()))
-        {
-            event.setCancelled(true);
-            return;
-        }
-
-        this.players.add(player.getUniqueId());
-
-        this.getServer().getScheduler().runTaskLater(this, () -> {
-            player.setCooldown(Material.GOLDEN_APPLE, 20 * this.config.getInt("general.golden_apple"));
-        }, 0);
     }
 }
